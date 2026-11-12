@@ -1,0 +1,20 @@
+# Render Blueprint: one web service + one Postgres. Deploy via "New > Blueprint" on the repo.
+services:
+  - type: web
+    name: ledgerline
+    runtime: node
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PGSSL
+        value: "true"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase: { name: ledgerline-db, property: connectionString }
+databases:
+  - name: ledgerline-db
+    plan: free
