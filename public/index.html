@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LedgerLine</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#14181f;--mute:#667085;--line:#e4e7ec;--acc:#0b5fff;--bad:#b42318;--ok:#067647}
+@media(prefers-color-scheme:dark){:root{--bg:#0e1116;--card:#171b22;--fg:#e8ecf2;--mute:#98a2b3;--line:#2a313c;--acc:#5b8cff;--bad:#f97066;--ok:#47cd89}}
+*{box-sizing:border-box}body{margin:0;font:15px/1.45 system-ui,sans-serif;background:var(--bg);color:var(--fg)}
+header{display:flex;justify-content:space-between;align-items:center;padding:12px 20px;background:var(--card);border-bottom:1px solid var(--line)}
+main{max-width:1000px;margin:20px auto;padding:0 16px;display:grid;gap:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px}
+h1{font-size:18px;margin:0}h2{font-size:15px;margin:0 0 10px}
+input,select,button{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg)}
+button{background:var(--acc);color:#fff;border:0;cursor:pointer}button:disabled{opacity:.5}
+button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+form{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);font-size:13px}
+.wrap{overflow-x:auto}.num{text-align:right;font-variant-numeric:tabular-nums}.bad{color:var(--bad)}.ok{color:var(--ok)}.mute{color:var(--mute)}
+#msg{min-height:1.4em}.acct{cursor:pointer}.acct:hover{background:var(--bg)}
+</style></head><body>
+<header><h1>LedgerLine</h1><div id="who" class="mute"></div></header>
+<main>
+<div id="login" class="card"><h2>Sign in</h2>
+<form id="loginForm"><input id="email" type="email" placeholder="email" required><input id="pw" type="password" placeholder="password" required><button>Sign in</button></form></div>
+<div id="msg" role="status"></div>
+<div id="app" hidden>
+ <div class="card"><h2>Accounts</h2><div class="wrap"><table id="accts"></table></div></div>
+ <div class="card" id="moveCard"><h2>Move money</h2>
+  <form id="fDep"><b>Deposit</b><input name="acct" placeholder="account id" size="8" required><input name="amt" placeholder="₹ amount" size="10" required><button>Deposit</button></form><br>
+  <form id="fWd"><b>Withdraw</b><input name="acct" placeholder="account id" size="8" required><input name="amt" placeholder="₹ amount" size="10" required><button>Withdraw</button></form><br>
+  <form id="fTr"><b>Transfer</b><input name="from" placeholder="from account" size="8" required><input name="to" placeholder="to account" size="8" required><input name="amt" placeholder="₹ amount" size="10" required><input name="memo" placeholder="memo (optional)"><button>Transfer</button></form>
+  <p class="mute">Each submission carries an Idempotency-Key. If the network drops, pressing the button again re-sends the same key, so money moves at most once.</p></div>
+ <div class="card"><h2 id="stTitle">Statement</h2><div class="wrap"><table id="stmt"></table></div></div>
+ <div class="card" id="adminCard" hidden><h2>Administration</h2>
+  <form id="fUser"><input name="email" placeholder="email" required><input name="password" placeholder="password (10+)" required><select name="role"><option>holder</option><option>admin</option><option>auditor</option></select><button>Create user</button></form><br>
+  <form id="fAcct"><input name="name" placeholder="account name" required><input name="owner" placeholder="owner user id" size="8" required><button>Create account</button></form></div>
+ <div class="card" id="overCard" hidden><h2>Oversight</h2><button class="ghost" id="bRec">Run reconciliation</button> <button class="ghost" id="bLog">Audit log</button> <button class="ghost" id="bRep">Duplicate requests</button><pre id="over" class="wrap"></pre></div>
+</div></main>
+<script>
+let token = null, me = null; const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const rupees = (p) => (p < 0 ? '-' : '') + '₹' + (Math.abs(p) / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+function toPaise(s) { // strict string parse: never floating point
+  const m = /^(\d+)(?:\.(\d{1,2}))?$/.exec(String(s).trim()); if (!m) throw new Error('Enter a valid amount, max 2 decimals');
+  return parseInt(m[1], 10) * 100 + parseInt((m[2] || '').padEnd(2, '0') || '0', 10);
+}
+function say(t, bad) { const m = $('#msg'); m.textContent = t; m.className = bad ? 'bad' : 'ok'; }
+async function api(method, url, body, key) {
+  const h = { 'Content-Type': 'application/json' }; if (token) h.Authorization = 'Bearer ' + token; if (key) h['Idempotency-Key'] = key;
+  const r = await fetch(url, { method, headers: h, body: body ? JSON.stringify(body) : undefined });
+  return { status: r.status, body: await r.json().catch(() => ({})), replay: r.headers.get('Idempotent-Replay') === 'true' };
+}
+$('#loginForm').onsubmit = async (e) => { e.preventDefault();
+  const r = await api('POST', '/api/auth/login', { email: $('#email').value, password: $('#pw').value });
+  if (r.status !== 200) return say(r.body.message || 'Login failed', true);
+  token = r.body.token; me = r.body.user; $('#login').hidden = true; $('#app').hidden = false;
+  $('#who').innerHTML = `${esc(me.email)} · <b>${esc(me.role)}</b> <button class="ghost" onclick="location.reload()">Sign out</button>`;
+  $('#moveCard').hidden = me.role === 'auditor'; $('#adminCard').hidden = me.role !== 'admin'; $('#overCard').hidden = me.role === 'holder';
+  say(''); loadAccounts();
+};
+async function loadAccounts() {
+  const r = await api('GET', '/api/accounts');
+  $('#accts').innerHTML = '<tr><th>ID</th><th>Name</th><th>Owner</th><th class="num">Balance</th></tr>' +
+    r.body.map((a) => `<tr class="acct" data-id="${a.id}"><td>${a.id}</td><td>${esc(a.name)}</td><td>${esc(a.owner_email)}</td><td class="num">${rupees(a.balance_paise)}</td></tr>`).join('');
+  document.querySelectorAll('.acct').forEach((tr) => (tr.onclick = () => loadStatement(tr.dataset.id)));
+  if (r.body[0]) loadStatement(r.body[0].id);
+}
+async function loadStatement(id) {
+  const r = await api('GET', `/api/accounts/${id}/statement`); $('#stTitle').textContent = `Statement — account ${id}`;
+  $('#stmt').innerHTML = '<tr><th>#</th><th>When</th><th>Type</th><th>Status</th><th>From→To</th><th class="num">Amount</th><th class="num">Balance</th><th>By</th><th>Memo</th></tr>' +
+    (r.body || []).map((t) => `<tr><td>${t.seq}</td><td>${new Date(t.created_at).toLocaleString()}</td><td>${t.kind}</td>
+      <td class="${t.status === 'POSTED' ? 'ok' : 'bad'}">${t.status}${t.reason ? ' · ' + esc(t.reason) : ''}</td><td>${t.from_account_id}→${t.to_account_id}</td>
+      <td class="num">${t.signed_amount_paise != null ? rupees(t.signed_amount_paise) : '<span class="mute">' + rupees(t.amount_paise) + '</span>'}</td>
+      <td class="num">${t.running_balance_paise != null ? rupees(t.running_balance_paise) : ''}</td><td>${esc(t.initiated_by_email || '')}</td><td>${esc(t.memo)}</td></tr>`).join('');
+}
+// One key per user intent. Kept across network failures (so a retry is a true replay), cleared once the server answered.
+function mover(formSel, build) {
+  const f = $(formSel); let pending = null;
+  f.onsubmit = async (e) => { e.preventDefault(); const btn = f.querySelector('button'); btn.disabled = true;
+    try {
+      const d = Object.fromEntries(new FormData(f)); const [url, body] = build(d);
+      const sig = JSON.stringify([url, body]); if (!pending || pending.sig !== sig) pending = { sig, key: crypto.randomUUID() };
+      const r = await api('POST', url, body, pending.key); pending = null;
+      if (r.status === 201) say((r.replay ? 'Already processed (replay). ' : 'Done. ') + 'Transaction ' + r.body.transaction.id);
+      else say(`${r.body.error || 'Error'}: ${r.body.message || ''}`, true);
+      loadAccounts();
+    } catch (err) { say(err.message.includes('amount') ? err.message : 'Network error — press again to retry safely (same key).', true); }
+    btn.disabled = false; };
+}
+mover('#fDep', (d) => [`/api/accounts/${d.acct}/deposits`, { amount_paise: toPaise(d.amt) }]);
+mover('#fWd', (d) => [`/api/accounts/${d.acct}/withdrawals`, { amount_paise: toPaise(d.amt) }]);
+mover('#fTr', (d) => ['/api/transfers', { from_account_id: +d.from, to_account_id: +d.to, amount_paise: toPaise(d.amt), memo: d.memo || undefined }]);
+$('#fUser').onsubmit = async (e) => { e.preventDefault(); const d = Object.fromEntries(new FormData(e.target)); const r = await api('POST', '/api/users', d); say(r.status === 201 ? `User ${r.body.id} created` : r.body.message, r.status !== 201); };
+$('#fAcct').onsubmit = async (e) => { e.preventDefault(); const d = Object.fromEntries(new FormData(e.target)); const r = await api('POST', '/api/accounts', { name: d.name, owner_id: +d.owner }); say(r.status === 201 ? `Account ${r.body.id} created` : r.body.message, r.status !== 201); loadAccounts(); };
+for (const [b, u] of [['#bRec', '/api/reconcile'], ['#bLog', '/api/audit-log'], ['#bRep', '/api/replays']]) $(b).onclick = async () => { $('#over').textContent = JSON.stringify((await api('GET', u)).body, null, 2); };
+</script></body></html>
