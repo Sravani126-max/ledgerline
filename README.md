@@ -2,7 +2,7 @@
 
 Money movement with a ledger you can prove. Node 22 + Express + PostgreSQL. Double-entry, append-only, idempotent, concurrency-safe.
 
-**Live:** `<PASTE LIVE URL>` · **Repo:** `<PASTE REPO URL>` · **Demo video:** `<PASTE LINK>`
+**Live:** `https://ledgerline-fdph.onrender.com` · **Repo:** `https://github.com/Sravani126-max/ledgerline` · **Demo video:** `<PASTE LINK>`
 
 ## Demo accounts (one per role)
 
