@@ -1,0 +1,19 @@
+{
+  "name": "ledgerline",
+  "version": "1.0.0",
+  "description": "Money movement with a ledger you can prove",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node scripts/migrate.js && node src/server.js",
+    "migrate": "node scripts/migrate.js",
+    "seed": "node scripts/seed.js",
+    "test": "node --test --test-concurrency=1 test/*.test.js"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.12.0"
+  }
+}
